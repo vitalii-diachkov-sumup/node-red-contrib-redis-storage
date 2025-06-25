@@ -142,4 +142,19 @@ const redisStorage = {
     log.info(`type: ${type}`);
     log.info(`path: ${path}`);
     log.info(`meta: ${JSON.stringify(meta, null, 2)}`);
-    log.info
+    log.info(`body: ${body}`);
+
+    const key = `nr:lib:${type}:${path}`;
+    const entry = { meta, body };
+    return saveJSON(key, entry);
+  },
+
+  // Add cleanup method for graceful shutdown
+  async close() {
+    if (client) {
+      await client.quit();
+    }
+  },
+};
+
+module.exports = redisStorage;
