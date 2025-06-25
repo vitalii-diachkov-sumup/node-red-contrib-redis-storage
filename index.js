@@ -3,7 +3,7 @@ const { createClient } = require('redis');
 // Private variables
 let settings;
 let client;
-let debug = false;
+let debug = true;
 
 const log = {
   info: (message) => {
