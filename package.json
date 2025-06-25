@@ -13,8 +13,6 @@
   "author": "Andrew Allen",
   "license": "ISC",
   "dependencies": {
-    "redis": "^2.6.5",
-    "util": "^0.10.3",
-    "when": "^3.7.8"
+    "redis": "^4.6.0"
   }
 }

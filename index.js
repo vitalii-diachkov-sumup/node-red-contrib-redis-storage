@@ -1,156 +1,145 @@
-// require dependencies
-var util = require('util'),
-    when = require('when')
+const { createClient } = require('redis');
 
-// Redis setup
-var redis = require("redis");
-var client;
+// Private variables
+let settings;
+let client;
+let debug = false;
 
-// Private variables and functions
-var settings;
-var debug = false;
-
-var saveJSON = function(key, json) {
-  var string = JSON.stringify(json);
-  return when.promise(function(resolve, reject) {
-    client.set(key, string);
-    resolve();
-  });
-}
-
-var fetchJSON = function(key, fallback) {
-  if (fallback === undefined) {
-    fallback = {};
-  }
-
-  return when.promise(function(resolve,reject) {
-    client.get(key, function(err, reply) {
-      if (reply === null) {
-        return resolve(fallback);
-      }
-
-      var json = JSON.parse(reply.toString());
-      return resolve(json);
-    });
-  });
-}
-
-var log = {
-  info: function (message) {
+const log = {
+  info: (message) => {
     if (debug) {
       console.info(message);
     }
+  },
+};
+
+const saveJSON = async (key, json) => {
+  const string = JSON.stringify(json);
+  await client.set(key, string);
+};
+
+const fetchJSON = async (key, fallback = {}) => {
+  try {
+    const reply = await client.get(key);
+    if (reply === null) {
+      return fallback;
+    }
+    return JSON.parse(reply);
+  } catch (error) {
+    log.info(`Error fetching JSON for key ${key}: ${error.message}`);
+    return fallback;
   }
-}
+};
 
-// Public functions
-var redisStorage = {
-  init: function(_settings) {
+// Public API
+const redisStorage = {
+  async init(_settings) {
     settings = _settings;
-    log.info("initialized with settings:");
-    log.info(util.inspect(settings));
-    // init redis client connection
-    client = redis.createClient(settings.redis);
+    log.info('initialized with settings:');
+    log.info(JSON.stringify(settings, null, 2));
 
-    return when.promise(function(resolve,reject) {
-      resolve();
+    // Create Redis client with modern configuration
+    client = createClient({
+      ...settings.redis,
+      // Add default error handling
+      socket: {
+        reconnectStrategy: (retries) => Math.min(retries * 50, 500),
+        ...settings.redis?.socket,
+      },
     });
+
+    client.on('error', (err) => {
+      console.error('Redis Client Error:', err);
+    });
+
+    await client.connect();
   },
 
-  getFlows: function() {
-    log.info("getFlows called");
-    return fetchJSON('nr:flows', [])
+  async getFlows() {
+    log.info('getFlows called');
+    return fetchJSON('nr:flows', []);
   },
 
-  saveFlows: function(flows) {
-    log.info("saveFlows called with:");
+  async saveFlows(flows) {
+    log.info('saveFlows called with:');
     log.info(flows);
     return saveJSON('nr:flows', flows);
   },
 
-  getCredentials: function() {
-    log.info("getCredentials called");
+  async getCredentials() {
+    log.info('getCredentials called');
     return fetchJSON('nr:credentials');
   },
 
-  saveCredentials: function(credentials) {
-    log.info("saveCredentials called with:");
+  async saveCredentials(credentials) {
+    log.info('saveCredentials called with:');
     log.info(credentials);
     return saveJSON('nr:credentials', credentials);
   },
 
-  getSettings: function() {
-    log.info("getSettings called");
+  async getSettings() {
+    log.info('getSettings called');
     return fetchJSON('nr:settings');
   },
 
-  saveSettings: function(newSettings) {
-    log.info("saveSettings called with:");
-    log.info(util.inspect(newSettings));
+  async saveSettings(newSettings) {
+    log.info('saveSettings called with:');
+    log.info(JSON.stringify(newSettings, null, 2));
     return saveJSON('nr:settings', newSettings);
   },
 
-  getSessions: function() {
-    log.info("getSessions called");
+  async getSessions() {
+    log.info('getSessions called');
     return fetchJSON('nr:sessions');
   },
 
-  saveSessions: function(sessions) {
-    log.info("saveSessions called with:");
-    log.info(util.inspect(sessions));
+  async saveSessions(sessions) {
+    log.info('saveSessions called with:');
+    log.info(JSON.stringify(sessions, null, 2));
     return saveJSON('nr:sessions', sessions);
   },
 
-  getLibraryEntry: function(type, path) {
-    log.info("getLibraryEntry called with:");
-    log.info("type: " + type);
-    log.info("path: " + path);
+  async getLibraryEntry(type, path) {
+    log.info('getLibraryEntry called with:');
+    log.info(`type: ${type}`);
+    log.info(`path: ${path}`);
 
-    return when.promise(function(resolve,reject) {
-      if (path[0] === "/") {
-        // List out the library files in the directory
-        var _path = path.substr(1); // drop leading slash
-        var prefix = "nr:lib:" + type + ":" + _path + "*";
-        client.keys(prefix, function(err, replies) {
-          var entries = [];
+    if (path[0] === '/') {
+      // List library files in directory
+      const _path = path.substr(1); // drop leading slash
+      const prefix = `nr:lib:${type}:${_path}*`;
+      const replies = await client.keys(prefix);
+      const entries = [];
 
-          replies.forEach(function(reply, i) {
-            var filepath = reply.substr(prefix.length - 1);
-            if (filepath[0] === "/") {
-              filepath = filepath.substr(1);
-            }
-            if (filepath.includes("/")) {
-              var entry = filepath.split("/")[0];
-            } else {
-              var entry = {fn: filepath};
-            }
-            entries.push(entry);
-          });
+      replies.forEach((reply) => {
+        let filepath = reply.substr(prefix.length - 1);
+        if (filepath[0] === '/') {
+          filepath = filepath.substr(1);
+        }
+        
+        const entry = filepath.includes('/')
+          ? filepath.split('/')[0]
+          : { fn: filepath };
+        
+        entries.push(entry);
+      });
 
-          return resolve(entries);
-        });
-      } else {
-        // return the content of the requested library file
-        var key = "nr:lib:" + type + ":" + path;
-        client.get(key, function(err, reply) {
-          var json = JSON.parse(reply.toString());
-          return resolve(json.body);
-        });
+      return entries;
+    } else {
+      // Return content of requested library file
+      const key = `nr:lib:${type}:${path}`;
+      const reply = await client.get(key);
+      if (reply) {
+        const json = JSON.parse(reply);
+        return json.body;
       }
-    });
+      return null;
+    }
   },
 
-  saveLibraryEntry: function(type, path, meta, body) {
-    log.info("saveLibraryEntry called with:");
-    log.info("type: " + type);
-    log.info("path: " + path);
-    log.info("meta: " + util.inspect(meta));
-    log.info("body: " + body);
-
-    var key = "nr:lib:" + type + ":" + path;
-    var entry = {meta: meta, body: body};
-    return saveJSON(key, entry)
-  }
-}
-
-module.exports = redisStorage;
+  async saveLibraryEntry(type, path, meta, body) {
+    log.info('saveLibraryEntry called with:');
+    log.info(`type: ${type}`);
+    log.info(`path: ${path}`);
+    log.info(`meta: ${JSON.stringify(meta, null, 2)}`);
+    log.info
